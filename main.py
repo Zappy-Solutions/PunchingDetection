@@ -14,22 +14,49 @@ from threading import Lock
 # -------------------------------
 # Configuration
 # -------------------------------
-CONFIDENCE_THRESHOLD = 0.65  # Adjust between 0.5 - 0.6
-LINE_THRESHOLD = 20  # Distance (pixels) to consider "on" a line
+CONFIDENCE_THRESHOLD = 0.65 # Adjust between 0.5 - 0.7 as needed
+LINE_THRESHOLD = 30  # Distance (pixels) to consider "on" a line
+FRAME_SKIP = 2  # Process every Nth frame for performance optimization
+VIOLATION_DELAY = 30  # seconds
 
-# User Input: Choose Video File or Webcam
+# Enable OpenCV optimizations
+cv2.setUseOptimized(True)
+
+# -------------------------------
+# Choose Input Mode: Video File or Webcam
+# -------------------------------
 mode = input("Enter '1' for webcam or '2' for video file: ")
 if mode == '2':
     VIDEO_FILE = input("Enter the path to the video file: ")
     cap = cv2.VideoCapture(VIDEO_FILE)
-    # cap = cv2.VideoCapture("Punching.mp4")
+    # Example: cap = cv2.VideoCapture("Punching.mp4")
 else:
     cap = cv2.VideoCapture(0)  # Default webcam
 
 # -------------------------------
-# Helper functions
+# Frame Reader Thread
 # -------------------------------
+# Create a thread-safe queue to hold frames.
+frame_queue = Queue(maxsize=5)
 
+def read_frames(cap, queue):
+    """
+    Continuously read frames from the capture and put them into the queue.
+    When the stream ends, put a sentinel (None) into the queue.
+    """
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        queue.put(frame)
+    queue.put(None)
+
+# Start the frame reader thread (daemon thread so it exits when the main program exits)
+threading.Thread(target=read_frames, args=(cap, frame_queue), daemon=True).start()
+
+# -------------------------------
+# Helper Functions
+# -------------------------------
 def point_line_distance(point, line):
     """
     Calculate the perpendicular distance from a point to a line.
@@ -39,8 +66,8 @@ def point_line_distance(point, line):
     """
     (x0, y0) = point
     ((x1, y1), (x2, y2)) = line
-    numerator = abs((y2 - y1)*x0 - (x2 - x1)*y0 + x2*y1 - y2*x1)
-    denominator = ((y2 - y1)**2 + (x2 - x1)**2)**0.5
+    numerator = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
+    denominator = ((y2 - y1) ** 2 + (x2 - x1) ** 2) ** 0.5
     return numerator / denominator if denominator != 0 else float('inf')
 
 def select_line(window_name, frame):
@@ -65,16 +92,15 @@ def select_line(window_name, frame):
     cv2.setMouseCallback(window_name, mouse_callback)
     print(f"Select two points for {window_name} and press 'c' to confirm.")
 
-    # Wait until the user presses 'c' (confirm) after selecting at least two points
     while True:
         key = cv2.waitKey(1) & 0xFF
         if key == ord('c') and len(points) >= 2:
             break
-    cv2.setMouseCallback(window_name, lambda *args: None)  # disable callback
+    cv2.setMouseCallback(window_name, lambda *args: None)  # Disable callback
     return points[0], points[1]
 
 # -------------------------------
-# Main initialization and setup
+# Main Initialization and Setup
 # -------------------------------
 
 # Enable GPU acceleration if available
@@ -88,7 +114,8 @@ print("[INFO] YOLOv8 model loaded successfully.")
 
 # Initialize DeepSORT tracker (Real-time version)
 print("[INFO] Initializing DeepSORT tracker...")
-tracker = DeepSort(max_age=70, n_init=3, nn_budget=100)
+# tracker = DeepSort(max_age=70, n_init=3, nn_budget=100)
+tracker = DeepSort(max_age=50, n_init=3, nn_budget=100)
 
 # Telegram bot setup
 TELEGRAM_BOT_TOKEN = "your_bot_token"
@@ -100,12 +127,15 @@ print("[INFO] Telegram bot initialized.")
 conn = sqlite3.connect("violations.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS Violations (UserID TEXT, Time TEXT, Issue TEXT)")
+# Enable Write-Ahead Logging (WAL) mode for better performance
+conn.execute("PRAGMA journal_mode=WAL;")
 db_lock = Lock()
 print("[INFO] Database connected and table ensured.")
 
 # -------------------------------
 # Select Punching & Crossing Lines
 # -------------------------------
+# Use an initial frame (read directly from cap) for line selection
 ret, init_frame = cap.read()
 if not ret:
     print("[ERROR] Could not read first frame for line selection.")
@@ -134,42 +164,44 @@ violation_queue = Queue(maxsize=100)
 # mqtt_client.connect("mqtt_broker_address", 1883, 60)
 
 # -------------------------------
-# Violation processing thread
+# Violation Processing Thread
 # -------------------------------
-
 def process_violations():
     while True:
         track_id, punch_time = violation_queue.get()
         alert_msg = f"⚠️ Alert: User {track_id} punched but didn't cross!"
         print(f"[VIOLATION] Processing violation: {alert_msg}")
-
         with db_lock:
             cursor.execute("INSERT INTO Violations VALUES (?, ?, ?)", (track_id, punch_time, "Did not cross"))
             conn.commit()
-
         # mqtt_client.publish("alerts/violations", alert_msg)
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=alert_msg)
         print(f"[ALERT] Telegram alert sent for User {track_id}")
+        # Uncomment the next line if you wish to signal task completion:
         # violation_queue.task_done()
 
 threading.Thread(target=process_violations, daemon=True).start()
 print("[INFO] Violation processing thread started.")
 
 # -------------------------------
-# Main processing loop
+# Main Processing Loop
 # -------------------------------
-
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        print("[ERROR] Failed to read frame.")
+frame_count = 0
+while True:
+    frame = frame_queue.get()
+    if frame is None:  # Sentinel received, end of stream
+        print("[INFO] End of video stream. Exiting...")
         break
+
+    frame_count += 1
+    if frame_count % FRAME_SKIP != 0:
+        continue  # Skip frames for performance
 
     # Draw the selected punching and crossing lines on the frame
     cv2.line(frame, punching_line[0], punching_line[1], (0, 0, 255), 2)  # Red line for punching
     cv2.line(frame, crossing_line[0], crossing_line[1], (0, 255, 0), 2)  # Green line for crossing
 
-    # Run YOLOv8 detection
+    # Run YOLOv8 detection on the current frame
     results = model(frame, verbose=False)
     detections = []
     print("[INFO] Processing detections...")
@@ -177,7 +209,7 @@ while cap.isOpened():
     for result in results:
         for box, conf, cls in zip(result.boxes.xyxy, result.boxes.conf, result.boxes.cls):
             x1, y1, x2, y2 = box  # Bounding box coordinates
-            if int(cls) == 0 and conf >= CONFIDENCE_THRESHOLD:  # Assuming class 0 is "person" and check for "person" and confidence score
+            if int(cls) == 0 and conf >= CONFIDENCE_THRESHOLD:
                 # Draw detection bounding box (blue) and record detection
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 20, 147), 2)
                 detections.append([[x1, y1, x2, y2], conf])
@@ -195,47 +227,43 @@ while cap.isOpened():
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
 
-        # Default ID Color: Magenta
-        id_color = (255, 0, 255)
-
         # Check if the center is near the punching line
         if point_line_distance((center_x, center_y), punching_line) < LINE_THRESHOLD:
             print("Center is near the punching line")
-            id_color = 255, 165, 0  # Change to Orange
-
+            id_color = (255, 165, 0)  # Change to Orange
         # Check if the center is near the crossing line
-        if point_line_distance((center_x, center_y), crossing_line) < LINE_THRESHOLD:
+        elif point_line_distance((center_x, center_y), crossing_line) < LINE_THRESHOLD:
             print("Center is near the crossing line")
             id_color = (0, 255, 127)  # Change to Spring Green
+        # Default ID Color: Magenta
+        else:
+            id_color = (255, 0, 255)
 
-        # Draw the tracked bounding box (green) with the assigned ID
-        # cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+        # Draw the tracked ID text on the frame
+        # cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), id_color, 2)
         cv2.putText(frame, f"ID: {track_id}", (int(x1), int(y1) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, id_color, 2)
-
-        print(f"[TRACK] Tracking ID: {track_id}, Center: ({center_x:.1f}, {center_y:.1f})")
+        # print(f"[TRACK] Tracking ID: {track_id}, Center: ({center_x:.1f}, {center_y:.1f})")
 
         # Check if the center is near the punching line.
         distance_to_punch = point_line_distance((center_x, center_y), punching_line)
         if distance_to_punch < LINE_THRESHOLD:
             if track_id not in user_tracking:
                 user_tracking[track_id] = {"punched": datetime.now(), "crossed": False}
-                print(f"[PUNCH] User {track_id} punched at {user_tracking[track_id]['punched']} "
-                      f"(distance: {distance_to_punch:.2f})")
+                print(f"[PUNCH] User {track_id} punched at {user_tracking[track_id]['punched']} (distance: {distance_to_punch:.2f})")
 
         # Check if the center is near the crossing line.
         distance_to_cross = point_line_distance((center_x, center_y), crossing_line)
         if distance_to_cross < LINE_THRESHOLD:
             if track_id in user_tracking and not user_tracking[track_id]["crossed"]:
                 user_tracking[track_id]["crossed"] = True
-                print(f"[CROSS] User {track_id} successfully crossed "
-                      f"(distance: {distance_to_cross:.2f})")
+                print(f"[CROSS] User {track_id} successfully crossed (distance: {distance_to_cross:.2f})")
 
     # Check for users who have been punched but not crossed after a delay
     for track_id, data in list(user_tracking.items()):
         if data["punched"] and not data["crossed"]:
             elapsed_time = (datetime.now() - data["punched"]).seconds
-            if elapsed_time > 60:
+            if elapsed_time > VIOLATION_DELAY:
                 current_date = datetime.now().date()
                 if track_id in violations_recorded and violations_recorded[track_id] == current_date:
                     print(f"[INFO] User {track_id} already recorded for today, skipping.")
