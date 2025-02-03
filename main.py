@@ -39,7 +39,7 @@ logging.info("Logging is set up.")
 # -------------------------------
 # Configuration Constants
 # -------------------------------
-CONFIDENCE_THRESHOLD = 0.65  # Adjust between 0.5 - 0.7 as needed
+CONFIDENCE_THRESHOLD = 0.7  # Adjust between 0.5 - 0.7 as needed
 LINE_THRESHOLD = 30          # Distance (pixels) to consider "on" a line
 FRAME_SKIP = 2               # Process every Nth frame for performance optimization
 VIOLATION_DELAY = 10         # Seconds before considering a user as violation
@@ -348,23 +348,28 @@ while True:
         logging.info("[INFO] End of video stream. Exiting...")
         break
 
+    # Only process every FRAME_SKIP-th frame for performance
     frame_count += 1
     if frame_count % FRAME_SKIP != 0:
-        continue  # Skip frames for performance
+        continue
 
-    # Draw the selected punching and crossing lines on the frame
-    cv2.line(frame, punching_line[0], punching_line[1], (0, 0, 255), 2)  # Red line for punching
-    cv2.line(frame, crossing_line[0], crossing_line[1], (0, 255, 0), 2)  # Green line for crossing
+    # Draw the punching (red) and crossing (green) lines on the frame
+    cv2.line(frame, punching_line[0], punching_line[1], (0, 0, 255), 2)
+    cv2.line(frame, crossing_line[0], crossing_line[1], (0, 255, 0), 2)
+
+    # Get current time once for use later (avoids multiple datetime.now() calls)
+    now = datetime.now()
+    current_date = now.date()
 
     # Run YOLOv8 detection on the current frame
     results = model(frame, verbose=False)
     detections = []
-    # logging.info("[INFO] Processing detections...")
-
     for result in results:
         for box, conf, cls in zip(result.boxes.xyxy, result.boxes.conf, result.boxes.cls):
-            x1, y1, x2, y2 = box  # Bounding box coordinates
+            # Only consider persons (class 0) with sufficient confidence
             if int(cls) == 0 and conf >= CONFIDENCE_THRESHOLD:
+                x1, y1, x2, y2 = box
+                # Draw detection rectangle
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 20, 147), 2)
                 detections.append([[x1, y1, x2, y2], conf])
                 logging.info(f"[DETECTION] Person detected at: {(x1, y1, x2, y2)} with confidence {conf:.2f}")
@@ -376,46 +381,46 @@ while True:
     for track in tracks:
         if not track.is_confirmed():
             continue
+
         track_id = track.track_id
         x1, y1, x2, y2 = track.to_tlbr()
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
 
-        # Determine ID color based on proximity to lines
-        if point_line_distance((center_x, center_y), punching_line) < LINE_THRESHOLD:
-            # logging.info("Center is near the punching line")
+        # Compute the distances once for efficiency
+        distance_to_punch = point_line_distance((center_x, center_y), punching_line)
+        distance_to_cross = point_line_distance((center_x, center_y), crossing_line)
+
+        # Determine the color of the ID text based on proximity (crossing has higher priority)
+        id_color = (255, 0, 255)  # Magenta
+        if distance_to_punch < LINE_THRESHOLD:
             id_color = (255, 165, 0)  # Orange
-        elif point_line_distance((center_x, center_y), crossing_line) < LINE_THRESHOLD:
-            logging.info("Center is near the crossing line")
+            logging.info("Center is near the punching line")
+
+            # Register punch event if within threshold and not already recorded
+            if track_id not in user_tracking:
+                user_tracking[track_id] = {"punched": now, "crossed": False}
+                logging.info(f"[PUNCH] User {track_id} punched at {now} (distance: {distance_to_punch:.2f})")
+
+        if distance_to_cross < LINE_THRESHOLD:
             id_color = (0, 255, 127)  # Spring Green
-        else:
-            id_color = (255, 0, 255)  # Default: Magenta
+            logging.info("Center is near the crossing line")
+
+            # Register crossing event if within threshold and not yet marked
+            if track_id in user_tracking and not user_tracking[track_id]["crossed"]:
+                user_tracking[track_id]["crossed"] = True
+                logging.info(f"[CROSS] User {track_id} successfully crossed (distance: {distance_to_cross:.2f})")
 
         # Draw the tracked ID text on the frame
         cv2.putText(frame, f"ID: {track_id}", (int(x1), int(y1) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, id_color, 2)
 
-        # Check if the center is near the punching line.
-        distance_to_punch = point_line_distance((center_x, center_y), punching_line)
-        if distance_to_punch < LINE_THRESHOLD:
-            if track_id not in user_tracking:
-                user_tracking[track_id] = {"punched": datetime.now(), "crossed": False}
-                logging.info(f"[PUNCH] User {track_id} punched at {user_tracking[track_id]['punched']} (distance: {distance_to_punch:.2f})")
-
-        # Check if the center is near the crossing line.
-        distance_to_cross = point_line_distance((center_x, center_y), crossing_line)
-        if distance_to_cross < LINE_THRESHOLD:
-            if track_id in user_tracking and not user_tracking[track_id]["crossed"]:
-                user_tracking[track_id]["crossed"] = True
-                logging.info(f"[CROSS] User {track_id} successfully crossed (distance: {distance_to_cross:.2f})")
-
-    # Check for users who have been punched but not crossed after a delay
+    # Check for violations: users who were punched but have not crossed within a delay period
     for track_id, data in list(user_tracking.items()):
-        if data["punched"] and not data["crossed"]:
-            elapsed_time = (datetime.now() - data["punched"]).seconds
+        if not data["crossed"]:
+            elapsed_time = (now - data["punched"]).seconds
             if elapsed_time > VIOLATION_DELAY:
-                current_date = datetime.now().date()
-                if track_id in violations_recorded and violations_recorded[track_id] == current_date:
+                if violations_recorded.get(track_id) == current_date:
                     logging.info(f"[INFO] User {track_id} already recorded for today, skipping.")
                     continue
                 logging.info(f"[VIOLATION] Adding User {track_id} to violation queue.")
@@ -427,7 +432,7 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         logging.info("[INFO] Exiting...")
         break
-
+        
 # -------------------------------
 # Cleanup
 # -------------------------------
