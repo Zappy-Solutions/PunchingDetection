@@ -1,0 +1,6 @@
+.env
+*.log
+*.mp4
+
+violation_frames
+violations.db
