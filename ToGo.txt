@@ -1,0 +1,42 @@
+https://www.youtube.com/watch?v=FKaXn57IHH4 -> How to track the line
+
+
+
+your_project/
+│
+├── app.py                  # The Flask web application (see below)
+├── violations.db           # Your SQLite database (created above)
+├── violation_frames/       # Folder where violation images are saved
+├── templates/
+│    └── violations.html    # HTML template for displaying records
+└── static/                 # (Optional) for other static files
+
+
+
+
+# Install any package : Alt + Shift + Enter
+pip install --upgrade pip
+pip install numpy sqlite3 threading queue datetime
+pip install opencv-python torch ffmpeg-python paho-mqtt ultralytics
+pip install git+https://github.com/ifzhang/ByteTrack.git
+pip install git+https://github.com/ZQPei/deep_sort_pytorch.git
+pip install python-telegram-bot
+
+
+python --version
+py -3.10 -m venv env
+env\Scripts\activate
+python --version
+
+python.exe -m pip install --upgrade pip
+pip install --upgrade pip setuptools wheel
+
+pip install torch torchvision torchaudio
+
+pip install torch
+
+pip install opencv-python
+
+pip install opencv-python torch numpy paho-mqtt ffmpeg-python ultralytics bytetrack deep-sort-python telegram-python
+
+
