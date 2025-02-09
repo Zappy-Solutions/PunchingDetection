@@ -409,6 +409,8 @@ while True:
             # Register crossing event if within threshold and not yet marked
             if track_id in user_tracking and not user_tracking[track_id]["crossed"]:
                 user_tracking[track_id]["crossed"] = True
+                if "punched" not in user_tracking[track_id]:
+                    user_tracking[track_id] = {"punched": now}
                 logging.info(f"[CROSS] User {track_id} successfully crossed (distance: {distance_to_cross:.2f})")
 
         # Draw the tracked ID text on the frame
