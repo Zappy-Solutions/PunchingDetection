@@ -39,7 +39,7 @@ logging.info("Logging is set up.")
 # -------------------------------
 # Configuration Constants
 # -------------------------------
-CONFIDENCE_THRESHOLD = 0.7  # Adjust between 0.5 - 0.7 as needed
+CONFIDENCE_THRESHOLD = 0.8  # Adjust between 0.5 - 0.7 as needed
 LINE_THRESHOLD = 30          # Distance (pixels) to consider "on" a line
 FRAME_SKIP = 2               # Process every Nth frame for performance optimization
 VIOLATION_DELAY = 10         # Seconds before considering a user as violation
