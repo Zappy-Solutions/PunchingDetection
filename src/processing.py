@@ -59,6 +59,13 @@ def update_tracks_and_draw(frame, detections, now, punching_line, crossing_line,
             logging.warning(f"track_id: {track_id} is not confirmed, skipping.")
             continue
 
+        if hasattr(track, "time_since_update") and track.time_since_update > 5:
+            if track_id in user_tracking:
+                logging.info(
+                    f"track_id: {track_id} has not been updated for {track.time_since_update} frames; removing.")
+                del user_tracking[track_id]
+            continue
+
         # If the track has already crossed, just draw its ID with the stored color and skip further processing
         if user_tracking[track_id]["crossed"] is not None:
             id_color = user_tracking[track_id]["color"]
