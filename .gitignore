@@ -1,6 +1,5 @@
-.env
-*.log
+./.env
+./src/.env
+*.py~
 *.mp4
-
-violation_frames
-violations.db
+*.log
