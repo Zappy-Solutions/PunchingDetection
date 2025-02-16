@@ -35,21 +35,30 @@ def update_tracks_and_draw(frame, detections, now, punching_line, crossing_line,
     for track in tracks:
         track_id = track.track_id
 
+        id_color = (255, 0, 255)  # Default magenta
+        x1, y1, x2, y2 = track.to_tlbr()
+
         # Ensure track_id is initialized in user_tracking
         if track_id not in user_tracking:
+            logging.warning(f"track_id: {track_id} is not in user tracking")
             user_tracking[track_id] = {"punched": None, "crossed": None}  # Store timestamps
 
-        # **Skip unconfirmed tracks**
+            cv2.putText(frame, f"ID: {track_id}", (int(x1), int(y1) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, id_color, 2)
+
+        # Skip unconfirmed tracks
         if not track.is_confirmed():
-            logging.warning(f"track_id: {track_id} is not confirmed, skipping.")
+            logging.warning(f"track_id: {track_id} is not confirmed, skipping")
             continue
 
-        # **Skip tracks that have already crossed**
-        if user_tracking[track_id]["crossed"]:
-            # logging.warning(f"track_id: {track_id} is already crossed, skipping processing.")
+        # Skip tracks that have already crossed
+        if user_tracking[track_id]["crossed"] is not None:
+            id_color = (0, 255, 127)  # Spring green
+            logging.warning(f"track_id: {track_id} is already crossed, skipping processing")
+            cv2.putText(frame, f"ID: {track_id}", (int(x1), int(y1) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, id_color, 2)
             continue
 
-        x1, y1, x2, y2 = track.to_tlbr()
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
 
@@ -66,9 +75,6 @@ def update_tracks_and_draw(frame, detections, now, punching_line, crossing_line,
         crossed = any(point_line_distance(pt, crossing_line) < LINE_THRESHOLD for pt in bbox_points)
 
         logging.info(f"track_id: {track_id} \t punched: {punched} \t crossed: {crossed}")
-
-        id_color = (255, 0, 255)  # Default magenta
-
         if crossed:
             id_color = (0, 255, 127)  # Spring green
             logging.info(f"track_id: {track_id} \t Center is near the crossing line")
@@ -94,9 +100,9 @@ def update_tracks_and_draw(frame, detections, now, punching_line, crossing_line,
                 user_tracking[track_id]["punched"] = now  # Store the timestamp
                 logging.info(f"[PUNCH] User {track_id} punched at {now}")
 
+        logging.info(f"track_id: {track_id} updated ")
         cv2.putText(frame, f"ID: {track_id}", (int(x1), int(y1) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, id_color, 2)
-
 
 def check_violations(frame, now, user_tracking, violations_recorded, violation_queue):
     """
@@ -109,8 +115,8 @@ def check_violations(frame, now, user_tracking, violations_recorded, violation_q
             elapsed_time = (now - data["punched"]).seconds
             if elapsed_time > VIOLATION_DELAY:
                 if violations_recorded.get(track_id) == current_date:
-                    logging.info(f"[INFO] User {track_id} already recorded for today, skipping.")
+                    logging.info(f"[INFO] User {track_id} already recorded for today, skipping")
                     continue
-                logging.info(f"[VIOLATION] Adding User {track_id} to violation queue.")
+                logging.info(f"[VIOLATION] Adding User {track_id} to violation queue")
                 violation_queue.put((track_id, data["punched"], frame.copy()))
                 violations_recorded[track_id] = current_date
