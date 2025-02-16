@@ -18,3 +18,5 @@ env/
 incoming_files/
 processed_files/
 templates_bak/
+violations.db-shm
+violations.db-wal
