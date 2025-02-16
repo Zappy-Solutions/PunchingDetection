@@ -9,6 +9,9 @@
 **/yolov8m.pt
 **/*.bak
 
+.venv/
+YOLOX/
+
 .env_bak
 .idea/
 ByteTrack/
