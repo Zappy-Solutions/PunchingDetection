@@ -1,12 +1,8 @@
 import cv2
 
-# Define the RTSP URL (Ensure the credentials are correct)
-# Hikvision rtsp_url = "rtsp://admin:525ForgetMe!@192.168.68.118:554/Streaming/Channels/101/"
-
-# Impact 4Mbps
-rtsp_url = "rtsp://admin:admin123@192.168.68.124:554/rtsp/streaming?channel=01&subtype=0"
-
-
+ip_addr = "192.168.68.115"
+# Construct the RTSP URL from the IP address
+rtsp_url = f"rtsp://admin:admin123@{ip_addr}:554/rtsp/streaming?channel=01&subtype=0"
 # Open the RTSP stream
 cap = cv2.VideoCapture(rtsp_url)
 
@@ -16,9 +12,9 @@ if not cap.isOpened():
     exit()
 
 # Define the output file details
-output_filename = "hikvision_output.mp4"
+output_filename = "Impact_4MP_hikvision_output.mp4"
 fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Codec for MP4 format
-fps = 30  # Frames per second
+fps = 15  # Frames per second
 window_width = 1280
 window_height = 720
 
@@ -40,7 +36,7 @@ while True:
     out.write(frame_resized)
 
     # Display the resized frame
-    cv2.imshow("Hikvision Camera Feed (720p)", frame_resized)
+    cv2.imshow("4MP Impact Camera Feed (720p)", frame_resized)
 
     # Press 'q' to exit the loop
     if cv2.waitKey(1) & 0xFF == ord('q'):

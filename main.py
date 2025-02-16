@@ -21,11 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 # -------------------------------
 try:
     from dotenv import load_dotenv
-
     load_dotenv()
 except ImportError:
     pass  # Make sure environment variables are set externally
-
 
 def setup_logging():
     log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -37,50 +35,41 @@ def setup_logging():
     logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
     logging.info("Logging is set up.")
 
-
 setup_logging()
 
 # -------------------------------
 # Configuration Constants
 # -------------------------------
-CONFIDENCE_THRESHOLD = 0.8  # Adjust between 0.5 - 0.7 as needed
-LINE_THRESHOLD = 5  # Distance (pixels) to consider "on" a line
-FRAME_SKIP = 5  # Process every Nth frame for performance
-VIOLATION_DELAY = 60  # Seconds before considering a user as violation
+CONFIDENCE_THRESHOLD = 0.8  # Adjust as needed
+LINE_THRESHOLD = 5          # Distance in pixels to consider a point "on" the line
+FRAME_SKIP = 5              # Process every Nth frame for performance
+VIOLATION_DELAY = 60        # Seconds before considering a user as in violation
 
 cv2.setUseOptimized(True)
 
 # -------------------------------
-# Input Mode: Video File or Webcam
+# Input Mode: RTSP, Webcam, or Video File
 # -------------------------------
-# rtsp_url = "rtsp://admin:admin@192.168.68.113:554/streaming?channel=01&subtype=A"
-# rtsp_url = "rtsp://192.168.68.113:554/streaming?channel=01&subtype=0"
-# rtsp_url = "rtsp://admin:admin123@192.168.68.114:554/streaming?channel=01&subtype=0"
+# rtsp_url = "rtsp://192.168.68.113:554/rtsp/streaming?channel=01&subtype=0"
+rtsp_url = "rtsp://admin:525ForgetMe!@192.168.68.118:554/Streaming/Channels/101/"
 
-rtsp_url = "rtsp://192.168.68.113:554/rtsp/streaming?channel=01&subtype=0"
-
-mode = input("Enter '1' for RTSP, '2' for webcam, or '3' for video file: ")
+mode = input("Enter '1' for RTSP, '2' for webcam, or '3' for video file: ").strip()
 if mode == '1':
-    # rtsp_url = input("Enter the RTSP URL: ")
     logging.info(f"Selected RTSP mode with URL: {rtsp_url}")
     cap = cv2.VideoCapture(rtsp_url)
-    # Set resolution to 480p
+    # Set resolution to 480p (640x480)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-    desired_fps = 10  # Change this as needed
+    desired_fps = 10  # Change this if needed
     cap.set(cv2.CAP_PROP_FPS, desired_fps)
-
-    # Get FPS
     fps = cap.get(cv2.CAP_PROP_FPS)
     logging.info(f"FPS: {fps}")
-
 elif mode == '2':
     logging.info("Selected webcam mode")
     cap = cv2.VideoCapture(0)  # Default webcam
 else:
     logging.info("Selected video file mode")
-    VIDEO_FILE = input("Enter the path to the video file: ")
+    VIDEO_FILE = input("Enter the path to the video file: ").strip()
     cap = cv2.VideoCapture(VIDEO_FILE)
 
 # -------------------------------
@@ -88,12 +77,9 @@ else:
 # -------------------------------
 frame_queue = Queue(maxsize=5)
 violation_queue = Queue(maxsize=100)
-user_tracking = {}  # { track_id: {"punched": datetime, "crossed": bool} }
-violations_recorded = {}  # { track_id: date }
-
-# Lock for database and other shared resources
-db_lock = Lock()
-
+user_tracking = {}       # Format: { track_id: {"punched": datetime, "crossed": bool} }
+violations_recorded = {} # Format: { track_id: date }
+db_lock = Lock()         # For database and shared resource access
 
 # -------------------------------
 # Database Setup
@@ -113,9 +99,7 @@ def setup_database(db_path="violations.db"):
     logging.info("[INFO] Database connected and table ensured.")
     return conn, cursor
 
-
 conn, cursor = setup_database()
-
 
 # -------------------------------
 # Frame Reading Thread
@@ -133,9 +117,8 @@ def read_frames(cap, queue):
     queue.put(None)
     logging.info("[INFO] Frame reader thread ended.")
 
-
+# Start the frame reading thread immediately.
 threading.Thread(target=read_frames, args=(cap, frame_queue), daemon=True).start()
-
 
 # -------------------------------
 # Helper Functions
@@ -149,7 +132,6 @@ def point_line_distance(point, line):
     numerator = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
     denominator = ((y2 - y1) ** 2 + (x2 - x1) ** 2) ** 0.5
     return numerator / denominator if denominator != 0 else float('inf')
-
 
 def select_line(window_name, frame):
     """
@@ -174,9 +156,9 @@ def select_line(window_name, frame):
         key = cv2.waitKey(1) & 0xFF
         if key == ord('c') and len(points) >= 2:
             break
+
     cv2.setMouseCallback(window_name, lambda *args: None)  # Disable callback
     return points[0], points[1]
-
 
 # -------------------------------
 # Model & Tracker Initialization
@@ -185,12 +167,10 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 logging.info(f"[INFO] Using device: {device}")
 
 from ultralytics import YOLO
-
 model = YOLO("yolov8m.pt").to(device)
 logging.info("[INFO] YOLOv8 model loaded successfully.")
 
 from deep_sort_realtime.deepsort_tracker import DeepSort
-
 tracker = DeepSort(max_age=70, n_init=3, nn_budget=100)
 logging.info("[INFO] DeepSORT tracker initialized.")
 
@@ -227,7 +207,6 @@ WHATSAPP_MSG_TYPE = os.getenv("WHATSAPP_MSG_TYPE", "attendance")
 if not WHATSAPP_ACCOUNT_ID or not WHATSAPP_TO:
     logging.error("WhatsApp configuration is incomplete.")
 
-
 def send_sms(account_sid, auth_token, from_number, to_number, message_body):
     """Sends an SMS using the Twilio API."""
     logging.info("Sending SMS notification...")
@@ -242,7 +221,6 @@ def send_sms(account_sid, auth_token, from_number, to_number, message_body):
     except Exception as e:
         logging.error(f"Failed to send SMS: {e}")
         return None
-
 
 def send_message_http(account_id, to, message, msg_type):
     """Sends a message via HTTP POST request (for WhatsApp notifications)."""
@@ -265,11 +243,9 @@ def send_message_http(account_id, to, message, msg_type):
         logging.error(f"Exception occurred while sending WhatsApp message: {str(e)}")
         return {"error": str(e)}
 
-
 def send_custom_message(message):
     """Sends a custom message via WhatsApp."""
     return send_message_http(WHATSAPP_ACCOUNT_ID, WHATSAPP_TO, message, WHATSAPP_MSG_TYPE)
-
 
 def send_email(sender_email, receiver_email, password, subject, body):
     """Sends an email using SMTP."""
@@ -278,7 +254,6 @@ def send_email(sender_email, receiver_email, password, subject, body):
     msg['To'] = receiver_email
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
-
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
@@ -288,7 +263,6 @@ def send_email(sender_email, receiver_email, password, subject, body):
         return "Email sent successfully"
     except Exception as e:
         return f"Failed to send email: {e}"
-
 
 def send_notifications(alert_msg, image_path):
     """
@@ -335,13 +309,11 @@ def send_notifications(alert_msg, image_path):
 
     return responses
 
-
 # -------------------------------
 # Violation Processing Thread
 # -------------------------------
 VIOLATION_DIR = "violation_frames"
 os.makedirs(VIOLATION_DIR, exist_ok=True)
-
 
 def process_violations():
     """
@@ -368,17 +340,19 @@ def process_violations():
         logging.info(f"[ALERT] Notifications sent for User {track_id}: {responses}")
         violation_queue.task_done()
 
-
 threading.Thread(target=process_violations, daemon=True).start()
 logging.info("[INFO] Violation processing thread started.")
 
 # -------------------------------
 # Line Selection (User Input)
 # -------------------------------
-ret, init_frame = cap.read()
-if not ret:
-    logging.error("[ERROR] Could not read first frame for line selection.")
+# Instead of reading a frame directly from cap (which may conflict with the reading thread),
+# we get the initial frame from the frame_queue.
+init_frame = frame_queue.get()
+if init_frame is None:
+    logging.error("[ERROR] Could not retrieve initial frame from the queue.")
     exit()
+
 punching_line = select_line("Select Punching Line", init_frame.copy())
 logging.info(f"[INFO] Punching line selected: {punching_line}")
 crossing_line = select_line("Select Crossing Line", init_frame.copy())
@@ -386,7 +360,6 @@ logging.info(f"[INFO] Crossing line selected: {crossing_line}")
 
 cv2.destroyWindow("Select Punching Line")
 cv2.destroyWindow("Select Crossing Line")
-
 
 # -------------------------------
 # Frame Processing Functions
@@ -407,7 +380,6 @@ def process_detections(frame):
                 logging.info(f"[DETECTION] Person detected at: {(x1, y1, x2, y2)} with confidence {conf:.2f}")
     return detections
 
-
 def update_tracks_and_draw(frame, detections, now):
     """
     Update tracks using DeepSORT and update the frame with track IDs and events.
@@ -420,57 +392,45 @@ def update_tracks_and_draw(frame, detections, now):
         if not track.is_confirmed():
             continue
 
-        # track_id = track.track_id
-        # x1, y1, x2, y2 = track.to_tlbr()
-        # center_x = (x1 + x2) / 2
-        # center_y = (y1 + y2) / 2
-        #
-        # # Compute distances to both lines once
-        # distance_to_punch = point_line_distance((center_x, center_y), punching_line)
-        # distance_to_cross = point_line_distance((center_x, center_y), crossing_line)
-
         track_id = track.track_id
-        x1, y1, x2, y2 = track.to_tlbr()  # Get bounding box coordinates
+        x1, y1, x2, y2 = track.to_tlbr()  # Bounding box coordinates
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
 
-        # Define all bounding box points to check against the punching line
+        # Use multiple points from the bounding box for checking the line
         bbox_points = [
             (x1, y1),  # Top-left
             (x2, y1),  # Top-right
             (x1, y2),  # Bottom-left
             (x2, y2),  # Bottom-right
-            (center_x, center_y)  # Center point (Optional, for reference)
+            (center_x, center_y)  # Center point
         ]
 
-        # Check if any of the bounding box points are near the punching line
         punched = any(point_line_distance(pt, punching_line) < LINE_THRESHOLD for pt in bbox_points)
         crossed = any(point_line_distance(pt, crossing_line) < LINE_THRESHOLD for pt in bbox_points)
 
-        logging.info(f"punched:- {punched} \t crossed:- {crossed}")
+        logging.info(f"punched: {punched} \t crossed: {crossed}")
 
-        id_color = (255, 0, 255)  # Magenta
+        id_color = (255, 0, 255)  # Default Magenta
 
-        # Determine text color based on proximity: crossing takes priority
-        if crossed: # distance_to_cross < LINE_THRESHOLD:
+        # Crossing takes priority in coloring
+        if crossed:
             id_color = (0, 255, 127)  # Spring Green
             logging.info("Center is near the crossing line")
             if track_id in user_tracking and not user_tracking[track_id]["crossed"]:
                 user_tracking[track_id]["crossed"] = True
                 if "punched" not in user_tracking[track_id]:
                     user_tracking[track_id] = {"punched": now}
-                logging.info(f"[CROSS] User {track_id} successfully crossed (distance: {crossed:.2f})")
-
-        if punched: # distance_to_punch < LINE_THRESHOLD:
+                logging.info(f"[CROSS] User {track_id} successfully crossed")
+        if punched:
             id_color = (255, 165, 0)  # Orange
             logging.info("Center is near the punching line")
             if track_id not in user_tracking:
                 user_tracking[track_id] = {"punched": now, "crossed": False}
-                logging.info(f"[PUNCH] User {track_id} punched at {now} (distance: {punched:.2f})")
+                logging.info(f"[PUNCH] User {track_id} punched at {now}")
 
         cv2.putText(frame, f"ID: {track_id}", (int(x1), int(y1) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, id_color, 2)
-
 
 def check_violations(frame, now):
     """
@@ -489,7 +449,6 @@ def check_violations(frame, now):
                 violation_queue.put((track_id, data["punched"], frame.copy()))
                 violations_recorded[track_id] = current_date
 
-
 # -------------------------------
 # Main Processing Loop
 # -------------------------------
@@ -505,17 +464,14 @@ def main_loop():
         if frame_count % FRAME_SKIP != 0:
             continue  # Skip frames to improve performance
 
-        # Draw the static lines
-        cv2.line(frame, punching_line[0], punching_line[1], (0, 0, 255), 2)  # Red line for punching
-        cv2.line(frame, crossing_line[0], crossing_line[1], (0, 255, 0), 2)  # Green line for crossing
+        # Draw the static lines on the frame
+        cv2.line(frame, punching_line[0], punching_line[1], (0, 0, 255), 2)  # Red for punching
+        cv2.line(frame, crossing_line[0], crossing_line[1], (0, 255, 0), 2)  # Green for crossing
 
-        # Get a single timestamp for this frame processing
         now = datetime.now()
-
-        # Process detections and update tracker/draw info
-        # detections = process_detections(frame)
-        # update_tracks_and_draw(frame, detections, now)
-        # check_violations(frame, now)
+        detections = process_detections(frame)
+        update_tracks_and_draw(frame, detections, now)
+        check_violations(frame, now)
 
         logging.info(f"[QUEUE] Current Violation Queue Size: {violation_queue.qsize()}")
         cv2.namedWindow("Live CCTV Monitoring", cv2.WINDOW_NORMAL)
@@ -529,7 +485,6 @@ def main_loop():
     cv2.destroyAllWindows()
     conn.close()
     logging.info("[INFO] Cleanup completed.")
-
 
 # -------------------------------
 # Run the Main Loop
